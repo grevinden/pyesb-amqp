@@ -3,6 +3,6 @@
 !*.md
 !/src/lib.rs
 !/src/**.py
-!/github/workflow/*.yml
+!/github/workflows/*.yml
 __pycache__/
 *
