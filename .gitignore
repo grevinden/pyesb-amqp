@@ -1,8 +1,22 @@
-!*.lock
-!*.toml
-!*.md
-!/src/lib.rs
-!/src/**.py
-!/github/workflows/*.yml
+# Rust build artifacts
+/target/
+
+# Built wheels
+/dist/
+
+# Python cache
 __pycache__/
-*
+*.pyc
+*.pyo
+
+# Virtual environment
+.venv/
+.env/
+
+# Rust/Python compiled extension
+*.so
+
+# Tools
+.ruff_cache/
+.pytest_cache/
+.threadbridge/
