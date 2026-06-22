@@ -436,7 +436,8 @@ impl PyServer {
 
 // ---------------------------------------------------------------------------
 // Protocol header normalisation — 1С:Enterprise sends protocol-id=3 (SASL)
-// but doesn't actually do SASL, so we normalise it to protocol-id=0 (AMQP).
+// but doesn't actually do SASL, so we normalise it to protocol-id=0 (AMQP)
+// inside poll_read, transparently to the caller.
 // ---------------------------------------------------------------------------
 
 use std::io;
@@ -444,69 +445,146 @@ use std::pin::Pin;
 use std::task::{Context as TaskContext, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
-/// Wraps an AsyncRead and prepends a prefix of bytes before delegating.
 #[derive(Debug)]
-struct PrependReader<R> {
-    inner: R,
-    prefix: Vec<u8>,
-    pos: usize,
+enum NormalizeState {
+    /// Need to read the protocol header (first call to poll_read)
+    NeedHeader,
+    /// In the middle of reading the 8-byte header from inner
+    Reading {
+        buf: [u8; 8],
+        pos: usize,
+    },
+    /// Header read and normalised, returning to caller
+    Returning {
+        prefix: [u8; 8],
+        pos: usize,
+    },
+    /// Normal passthrough
+    Done,
 }
 
-impl<R: AsyncRead + Unpin> AsyncRead for PrependReader<R> {
+/// Wraps a TcpStream and normalises the first 8 bytes (AMQP protocol header):
+/// changes protocol-id 3 (SASL, used by 1С) to 0 (standard AMQP).
+#[derive(Debug)]
+struct NormalizingStream<S> {
+    inner: S,
+    state: NormalizeState,
+}
+
+impl<S: AsyncRead + Unpin> AsyncRead for NormalizingStream<S> {
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut TaskContext<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
+        // Take the state so we can borrow self freely
         let this = self.get_mut();
-        if this.pos < this.prefix.len() {
-            let n = std::cmp::min(this.prefix.len() - this.pos, buf.remaining());
-            buf.put_slice(&this.prefix[this.pos..this.pos + n]);
-            this.pos += n;
-            return Poll::Ready(Ok(()));
+        let mut state = std::mem::replace(&mut this.state, NormalizeState::Done);
+
+        loop {
+            match &mut state {
+                NormalizeState::Done => {
+                    // Passthrough — this won't actually be reached since we
+                    // take state and match before the loop.
+                    let result = Pin::new(&mut this.inner).poll_read(cx, buf);
+                    this.state = state;
+                    return result;
+                }
+                NormalizeState::Returning { prefix, pos } => {
+                    let remaining = prefix.len() - *pos;
+                    if remaining == 0 {
+                        state = NormalizeState::Done;
+                        continue;
+                    }
+                    let n = std::cmp::min(remaining, buf.remaining());
+                    buf.put_slice(&prefix[*pos..*pos + n]);
+                    *pos += n;
+                    this.state = state;
+                    return Poll::Ready(Ok(()));
+                }
+                NormalizeState::NeedHeader | NormalizeState::Reading { .. } => {
+                    // Ensure we're in Reading state with a buffer
+                    let (hbuf, pos) = match &mut state {
+                        NormalizeState::NeedHeader => {
+                            state = NormalizeState::Reading {
+                                buf: [0u8; 8],
+                                pos: 0,
+                            };
+                            match &mut state {
+                                NormalizeState::Reading { buf, pos } => (buf, pos),
+                                _ => unreachable!(),
+                            }
+                        }
+                        NormalizeState::Reading { buf, pos } => (buf, pos),
+                        _ => unreachable!(),
+                    };
+
+                    let mut inner_buf = ReadBuf::new(&mut hbuf[*pos..]);
+                    match Pin::new(&mut this.inner).poll_read(cx, &mut inner_buf) {
+                        Poll::Pending => {
+                            this.state = state;
+                            return Poll::Pending;
+                        }
+                        Poll::Ready(Err(e)) => {
+                            this.state = state;
+                            return Poll::Ready(Err(e));
+                        }
+                        Poll::Ready(Ok(())) => {
+                            let filled = inner_buf.filled().len();
+                            *pos += filled;
+                            if *pos < 8 {
+                                if filled == 0 {
+                                    this.state = state;
+                                    return Poll::Ready(Err(io::Error::new(
+                                        io::ErrorKind::UnexpectedEof,
+                                        "EOF reading AMQP protocol header",
+                                    )));
+                                }
+                                // Need more bytes, loop back
+                                continue;
+                            }
+                            // All 8 bytes read; normalise if needed
+                            if &hbuf[..4] == b"AMQP" && hbuf[4] == 0x03 {
+                                hbuf[4] = 0x00;
+                            }
+                            // Switch to Returning state
+                            let prefix = *hbuf;
+                            state = NormalizeState::Returning {
+                                prefix,
+                                pos: 0,
+                            };
+                            // Fall through to return from prefix
+                            continue;
+                        }
+                    }
+                }
+            }
         }
-        Pin::new(&mut this.inner).poll_read(cx, buf)
     }
 }
 
-/// Combines an AsyncRead and AsyncWrite into a single `Io` for fe2o3.
-#[derive(Debug)]
-struct CombinedStream<R, W> {
-    reader: R,
-    writer: W,
-}
-
-impl<R: AsyncRead + Unpin, W: Unpin> AsyncRead for CombinedStream<R, W> {
-    fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut TaskContext<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.get_mut().reader).poll_read(cx, buf)
-    }
-}
-
-impl<R: Unpin, W: AsyncWrite + Unpin> AsyncWrite for CombinedStream<R, W> {
+impl<S: AsyncWrite + Unpin> AsyncWrite for NormalizingStream<S> {
     fn poll_write(
         self: Pin<&mut Self>,
         cx: &mut TaskContext<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        Pin::new(&mut self.get_mut().writer).poll_write(cx, buf)
+        // Always passthrough for writes
+        Pin::new(&mut self.get_mut().inner).poll_write(cx, buf)
     }
 
     fn poll_flush(
         self: Pin<&mut Self>,
         cx: &mut TaskContext<'_>,
     ) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.get_mut().writer).poll_flush(cx)
+        Pin::new(&mut self.get_mut().inner).poll_flush(cx)
     }
 
     fn poll_shutdown(
         self: Pin<&mut Self>,
         cx: &mut TaskContext<'_>,
     ) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.get_mut().writer).poll_shutdown(cx)
+        Pin::new(&mut self.get_mut().inner).poll_shutdown(cx)
     }
 }
 
@@ -548,37 +626,11 @@ async fn run_server(
                 };
                 info!("Incoming connection from {peer_addr}");
 
-                // -- Normalise 1С protocol header before fe2o3 sees it --
-                // Read the first 8 bytes from the TCP stream, normalise
-                // protocol-id from 3 (SASL, sent by 1С) to 0 (AMQP).
-                let (mut reader, writer) = stream.into_split();
-
-                let mut raw_header = [0u8; 8];
-                use tokio::io::AsyncReadExt;
-                if let Err(e) = reader.read_exact(&mut raw_header).await {
-                    error!("Failed to read protocol header from {peer_addr}: {e}");
-                    continue;
-                }
-
-                if &raw_header[..4] != b"AMQP" {
-                    error!("Invalid protocol from {peer_addr}: not AMQP");
-                    continue;
-                }
-
-                // Normalise 1С's SASL protocol-id to standard AMQP
-                if raw_header[4] == 0x03 {
-                    info!("Normalised 1С SASL protocol header to AMQP");
-                    raw_header[4] = 0x00;
-                }
-
-                // Reconstruct a single Io from the split halves,
-                // prepending the (possibly normalised) header bytes.
-                let reader = PrependReader {
-                    inner: reader,
-                    prefix: raw_header.to_vec(),
-                    pos: 0,
+                // Wrap stream to normalise 1С's SASL protocol header
+                let stream = NormalizingStream {
+                    inner: stream,
+                    state: NormalizeState::NeedHeader,
                 };
-                let stream = CombinedStream { reader, writer };
 
                 let conn = match connection_acceptor.accept(stream).await {
                     Ok(c) => c,
