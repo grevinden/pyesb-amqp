@@ -23,13 +23,16 @@ class AmqpServer:
         ...
         await server.stop()
 
-    Или через async with::
+    Или через async with (автостарт, если передан handler)::
 
-        from pyesb_amqp import AMQP
-
-        async with AMQP() as server:
-            await server.start(handler)
+        async with AmqpServer(host="0.0.0.0", port=6698, handler=handler):
             await asyncio.Event().wait()
+
+    Без handler контекстный менеджер не запускает сервер:
+
+        async with AmqpServer() as server:
+            await server.start(handler)
+            ...
     """
 
     def __init__(
@@ -37,10 +40,12 @@ class AmqpServer:
         host: str = "0.0.0.0",
         port: int = 6698,
         container_id: str = "pyesb-broker",
+        handler: AmqpMessageHandler | None = None,
     ) -> None:
         from .amqp import Server
 
         self._server = Server(host, port, container_id)
+        self._handler = handler
         self._started = False
 
     async def start(self, handler: AmqpMessageHandler) -> None:
@@ -82,6 +87,8 @@ class AmqpServer:
         self._started = False
 
     async def __aenter__(self) -> Self:
+        if self._handler is not None:
+            await self.start(self._handler)
         return self
 
     async def __aexit__(self, *args: object) -> None:
