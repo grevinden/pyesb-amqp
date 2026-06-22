@@ -14,7 +14,7 @@ use tracing::{error, info, warn};
 use fe2o3_amqp::acceptor::{
     link::{LinkAcceptor, LinkEndpoint},
     session::{ListenerSessionHandle, SessionAcceptor},
-    ConnectionAcceptor, ListenerConnectionHandle, SaslAnonymousMechanism,
+    ConnectionAcceptor, ListenerConnectionHandle,
 };
 use fe2o3_amqp::types::{
     definitions,
@@ -434,6 +434,82 @@ impl PyServer {
 // Core AMQP server  (runs inside the tokio runtime)
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Protocol header normalisation — 1С:Enterprise sends protocol-id=3 (SASL)
+// but doesn't actually do SASL, so we normalise it to protocol-id=0 (AMQP).
+// ---------------------------------------------------------------------------
+
+use std::io;
+use std::pin::Pin;
+use std::task::{Context as TaskContext, Poll};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+
+/// Wraps an AsyncRead and prepends a prefix of bytes before delegating.
+#[derive(Debug)]
+struct PrependReader<R> {
+    inner: R,
+    prefix: Vec<u8>,
+    pos: usize,
+}
+
+impl<R: AsyncRead + Unpin> AsyncRead for PrependReader<R> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        let this = self.get_mut();
+        if this.pos < this.prefix.len() {
+            let n = std::cmp::min(this.prefix.len() - this.pos, buf.remaining());
+            buf.put_slice(&this.prefix[this.pos..this.pos + n]);
+            this.pos += n;
+            return Poll::Ready(Ok(()));
+        }
+        Pin::new(&mut this.inner).poll_read(cx, buf)
+    }
+}
+
+/// Combines an AsyncRead and AsyncWrite into a single `Io` for fe2o3.
+#[derive(Debug)]
+struct CombinedStream<R, W> {
+    reader: R,
+    writer: W,
+}
+
+impl<R: AsyncRead + Unpin, W: Unpin> AsyncRead for CombinedStream<R, W> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().reader).poll_read(cx, buf)
+    }
+}
+
+impl<R: Unpin, W: AsyncWrite + Unpin> AsyncWrite for CombinedStream<R, W> {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.get_mut().writer).poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+    ) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().writer).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+    ) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().writer).poll_shutdown(cx)
+    }
+}
+
 async fn run_server(
     host: &str,
     port: u16,
@@ -451,10 +527,7 @@ async fn run_server(
     // Сигналим Python-стороне, что listener готов.
     let _ = ready_tx.send(());
 
-    let connection_acceptor = ConnectionAcceptor::builder()
-        .container_id(container_id.to_owned())
-        .sasl_acceptor(SaslAnonymousMechanism::new())
-        .build();
+    let connection_acceptor = ConnectionAcceptor::new(container_id);
 
     loop {
         tokio::select! {
@@ -474,6 +547,38 @@ async fn run_server(
                     }
                 };
                 info!("Incoming connection from {peer_addr}");
+
+                // -- Normalise 1С protocol header before fe2o3 sees it --
+                // Read the first 8 bytes from the TCP stream, normalise
+                // protocol-id from 3 (SASL, sent by 1С) to 0 (AMQP).
+                let (mut reader, writer) = stream.into_split();
+
+                let mut raw_header = [0u8; 8];
+                use tokio::io::AsyncReadExt;
+                if let Err(e) = reader.read_exact(&mut raw_header).await {
+                    error!("Failed to read protocol header from {peer_addr}: {e}");
+                    continue;
+                }
+
+                if &raw_header[..4] != b"AMQP" {
+                    error!("Invalid protocol from {peer_addr}: not AMQP");
+                    continue;
+                }
+
+                // Normalise 1С's SASL protocol-id to standard AMQP
+                if raw_header[4] == 0x03 {
+                    info!("Normalised 1С SASL protocol header to AMQP");
+                    raw_header[4] = 0x00;
+                }
+
+                // Reconstruct a single Io from the split halves,
+                // prepending the (possibly normalised) header bytes.
+                let reader = PrependReader {
+                    inner: reader,
+                    prefix: raw_header.to_vec(),
+                    pos: 0,
+                };
+                let stream = CombinedStream { reader, writer };
 
                 let conn = match connection_acceptor.accept(stream).await {
                     Ok(c) => c,
