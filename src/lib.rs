@@ -14,7 +14,7 @@ use tracing::{error, info, warn};
 use fe2o3_amqp::acceptor::{
     link::{LinkAcceptor, LinkEndpoint},
     session::{ListenerSessionHandle, SessionAcceptor},
-    ConnectionAcceptor, ListenerConnectionHandle,
+    ConnectionAcceptor, ListenerConnectionHandle, SaslAnonymousMechanism,
 };
 use fe2o3_amqp::types::{
     definitions,
@@ -451,7 +451,10 @@ async fn run_server(
     // Сигналим Python-стороне, что listener готов.
     let _ = ready_tx.send(());
 
-    let connection_acceptor = ConnectionAcceptor::new(container_id);
+    let connection_acceptor = ConnectionAcceptor::builder()
+        .container_id(container_id.to_owned())
+        .sasl_acceptor(SaslAnonymousMechanism::new())
+        .build();
 
     loop {
         tokio::select! {
