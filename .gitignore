@@ -1,0 +1,8 @@
+!*.lock
+!*.toml
+!*.md
+!/src/lib.rs
+!/src/**.py
+!/github/workflow/*.yml
+__pycache__/
+*

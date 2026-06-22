@@ -1,0 +1,24 @@
+[build-system]
+requires = ["maturin>=1.14,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "pyesb-amqp"
+requires-python = ">=3.13"
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
+]
+dynamic = ["version"]
+dependencies = [
+    "fastapi>=0.138.0",
+    "pydantic>=2.10.6",
+]
+
+[tool.maturin]
+module-name = "pyesb_amqp.amqp"
+python-source = "src"
+
+[tool.uv]
+package = true
