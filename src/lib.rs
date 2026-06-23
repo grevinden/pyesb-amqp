@@ -7,7 +7,7 @@ use std::thread;
 use anyhow::Context;
 use pyo3::exceptions::{PyException, PyTypeError};
 use pyo3::prelude::*;
-use pyo3::types::PyAny;
+use pyo3::types::{PyAny, PyBytes};
 use pyo3::types::PyAnyMethods;
 use pyo3::Python;
 use tokio::sync::{mpsc, oneshot};
@@ -49,7 +49,6 @@ pub struct PyAmqpMessage {
     #[pyo3(get)]
     pub delivery_number: u64,
     /// Raw message body bytes.
-    #[pyo3(get)]
     pub body: Vec<u8>,
     /// Application properties as string key-value pairs.
     #[pyo3(get)]
@@ -64,6 +63,12 @@ pub struct PyAmqpMessage {
 
 #[pymethods]
 impl PyAmqpMessage {
+    /// Body as Python `bytes`, not `list[int]`.
+    #[getter]
+    fn body<'py>(&self, py: Python<'py>) -> Py<PyBytes> {
+        PyBytes::new(py, &self.body).into()
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "AmqpMessage(id={:?}, delivery_tag={}, delivery_number={}, body_len={}, props={})",
