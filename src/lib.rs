@@ -509,17 +509,24 @@ async fn handle_connection(
             info!("Session accepted, spawning handler");
             let tx = task_tx.clone();
             tokio::spawn(async move {
+                // Keep the connection handle alive for the session's lifetime.
+                // Dropping ListenerConnectionHandle sends Close to the connection
+                // engine, which closes outgoing_session_frames — the session
+                // engine won't be able to send frames after that.
+                let _conn = connection;
                 if let Err(e) = handle_session(session, tx).await {
                     error!("Session handler error: {e}");
                 }
+                // connection dropped here → Close sent to connection engine
+                info!("Connection handler done (session finished)");
             });
         }
         Err(e) => {
             error!("Session accept error: {e:?}");
+            info!("Connection handler done");
         }
     }
 
-    info!("Connection handler done");
     Ok(())
 }
 
