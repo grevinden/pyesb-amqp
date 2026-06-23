@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+
+
 use anyhow::Context;
 use pyo3::exceptions::{PyException, PyTypeError};
 use pyo3::prelude::*;
@@ -43,6 +45,9 @@ pub struct PyAmqpMessage {
     /// Delivery tag (hex-encoded) — transport-level counter assigned by the link.
     #[pyo3(get)]
     pub delivery_tag: String,
+    /// Delivery tag as decimal number (little-endian u64).
+    #[pyo3(get)]
+    pub delivery_number: u64,
     /// Raw message body bytes.
     #[pyo3(get)]
     pub body: Vec<u8>,
@@ -61,9 +66,10 @@ pub struct PyAmqpMessage {
 impl PyAmqpMessage {
     fn __repr__(&self) -> String {
         format!(
-            "AmqpMessage(id={:?}, delivery_tag={}, body_len={}, props={})",
+            "AmqpMessage(id={:?}, delivery_tag={}, delivery_number={}, body_len={}, props={})",
             self.id,
             self.delivery_tag,
+            self.delivery_number,
             self.body.len(),
             self.properties.len()
         )
@@ -585,6 +591,7 @@ async fn handle_receiver(
         let py_msg = PyAmqpMessage {
             id: msg_data.id,
             delivery_tag: msg_data.delivery_tag,
+            delivery_number: msg_data.delivery_number,
             body: msg_data.body,
             properties: msg_data.properties,
             durable: msg_data.durable,
@@ -655,8 +662,9 @@ async fn handle_receiver(
 fn delivery_to_data(delivery: &Delivery<Body<Value>>) -> MessageData {
     let message = delivery.message();
 
-    // -- delivery tag as hex --------------------------------------------
+    // -- delivery tag as hex + decimal -----------------------------------
     let delivery_tag = hex::encode(delivery.delivery_tag().as_ref());
+    let delivery_number = tag_to_u64(delivery.delivery_tag().as_ref());
 
     // -- AMQP message-id from Properties section ------------------------
     let id = message.properties.as_ref()
@@ -678,6 +686,7 @@ fn delivery_to_data(delivery: &Delivery<Body<Value>>) -> MessageData {
     MessageData {
         id,
         delivery_tag,
+        delivery_number,
         body,
         properties,
         durable,
@@ -685,10 +694,19 @@ fn delivery_to_data(delivery: &Delivery<Body<Value>>) -> MessageData {
     }
 }
 
+/// Parse delivery tag bytes as little-endian u64.
+fn tag_to_u64(tag: &[u8]) -> u64 {
+    let mut buf = [0u8; 8];
+    let len = tag.len().min(8);
+    buf[..len].copy_from_slice(&tag[..len]);
+    u64::from_le_bytes(buf)
+}
+
 /// Plain data struct used before conversion to the Python class.
 struct MessageData {
     id: Option<String>,
     delivery_tag: String,
+    delivery_number: u64,
     body: Vec<u8>,
     properties: HashMap<String, String>,
     durable: bool,
