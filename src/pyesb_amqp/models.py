@@ -13,6 +13,11 @@ class E1CMessage(BaseModel):
         integ_recipient_code: list[str]
         integ_message_body_size: NonNegativeInt
 
+        @field_validator("recipient_code", mode="before")
+        @classmethod
+        def recipient_code_validator(cls, v: str) -> list[str]:
+            return v.split(sep=",")
+
     id: UUID
     delivery_tag: bytes
     delivery_number: NonNegativeInt
@@ -25,8 +30,3 @@ class E1CMessage(BaseModel):
     @classmethod
     def delivery_tag_validator(cls, v: str) -> bytes:
         return bytes.fromhex(v)
-
-    @field_validator("recipient_code", mode="before")
-    @classmethod
-    def recipient_code_validator(cls, v: str) -> list[str]:
-        return v.split(sep=",")
