@@ -111,7 +111,8 @@ dependencies = [
 
 [[package]]
 name = "fe2o3-amqp"
-version = "0.14.0"
+version = "0.15.1"
+source = "git+https://github.com/grevinden/fe2o3-amqp.git#334e77d0dcfab2211db79c6375677cc840fbe73a"
 dependencies = [
  "bytes",
  "fe2o3-amqp-types",
@@ -135,8 +136,7 @@ dependencies = [
 [[package]]
 name = "fe2o3-amqp-types"
 version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8bcc8d13ed13fbb2fb664a6df114bcc32f8ca85c9cb6b89d4e7576c47f583706"
+source = "git+https://github.com/grevinden/fe2o3-amqp.git#334e77d0dcfab2211db79c6375677cc840fbe73a"
 dependencies = [
  "ordered-float",
  "serde",
@@ -250,15 +250,14 @@ dependencies = [
 
 [[package]]
 name = "getrandom"
-version = "0.3.4"
+version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "899def5c37c4fd7b2664648c28120ecec138e4d395b459e5ca34f9cce2dd77fd"
+checksum = "300e883d756b2e4ec94e02791f39b04b522276138852cfc41d9fb7e904106099"
 dependencies = [
  "cfg-if",
  "js-sys",
  "libc",
  "r-efi",
- "wasip2",
  "wasm-bindgen",
 ]
 
@@ -651,9 +650,9 @@ dependencies = [
 
 [[package]]
 name = "r-efi"
-version = "5.3.0"
+version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69cdb34c158ceb288df11e18b4bd39de994f6657d83847bdffdbd7f346754b0f"
+checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "rand"
@@ -708,8 +707,7 @@ dependencies = [
 [[package]]
 name = "serde_amqp"
 version = "0.14.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ffc615f24778bb6d92510fe82afc74f99fb03e6ddbfd75927356fe681c1b6037"
+source = "git+https://github.com/grevinden/fe2o3-amqp.git#334e77d0dcfab2211db79c6375677cc840fbe73a"
 dependencies = [
  "bytes",
  "indexmap",
@@ -723,8 +721,7 @@ dependencies = [
 [[package]]
 name = "serde_amqp_derive"
 version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22da57ecf44834259b4416250608e11da620750be91305bf6ae5d398954ddc6d"
+source = "git+https://github.com/grevinden/fe2o3-amqp.git#334e77d0dcfab2211db79c6375677cc840fbe73a"
 dependencies = [
  "convert_case",
  "darling",
@@ -1059,15 +1056,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ccf3ec651a847eb01de73ccad15eb7d99f80485de043efb2f370cd654f4ea44b"
 
 [[package]]
-name = "wasip2"
-version = "1.0.4+wasi-0.2.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b67efb37e106e55ce722a510d6b5f9c17f083e5fc79afc2badeb12cc313d9487"
-dependencies = [
- "wit-bindgen",
-]
-
-[[package]]
 name = "wasm-bindgen"
 version = "0.2.125"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1140,12 +1128,6 @@ checksum = "ae137229bcbd6cdf0f7b80a31df61766145077ddf49416a728b02cb3921ff3fc"
 dependencies = [
  "windows-link",
 ]
-
-[[package]]
-name = "wit-bindgen"
-version = "0.57.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 
 [[package]]
 name = "writeable"

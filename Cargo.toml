@@ -3,16 +3,13 @@ name = "pyesb_amqp"
 version = "0.0.0"
 edition = "2021"
 
-[patch.crates-io]
-fe2o3-amqp = { path = "patched-fe2o3-amqp" }
-
 [lib]
 name = "pyesb_amqp"
 crate-type = ["cdylib"]
 
 [dependencies]
 pyo3 = "0.29.0"
-fe2o3-amqp = { version = "0.14", features = ["acceptor", "tracing"] }
+fe2o3-amqp = { git = "https://github.com/grevinden/fe2o3-amqp.git", features = ["acceptor", "tracing"] }
 tokio = { version = "1", features = ["full"] }
 serde_json = "1"
 serde = "1"
