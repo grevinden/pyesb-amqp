@@ -1,32 +1,49 @@
+from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, NonNegativeInt, field_validator
+from pydantic import BaseModel, Field, NonNegativeInt, PositiveInt, field_validator
 
 
-class E1CMessage(BaseModel):
+class E1CMessage(BaseModel, extra="allow"):
     class Properties(BaseModel, extra="allow"):
-        integ_message_id: UUID
-        integ_message_correlation_id: UUID
-        sender_code: str = Field(validation_alias="SenderCode")
-        recipient_code: list[str] = Field(validation_alias="RecipientCode")
-        integ_sender_code: str
-        integ_recipient_code: list[str]
-        integ_message_body_size: NonNegativeInt
+        message_id: UUID
+        correlation_id: UUID | None = Field(None)
+        absolute_expiry_time: datetime
+        creation_time: datetime
 
-        @field_validator("integ_recipient_code", "recipient_code", mode="before")
+    class ApplicationProperties(BaseModel, extra="allow"):
+        integ_sender_code: str | None = Field(None)
+        integ_recipient_code: list[str] | None = Field(None)
+        integ_message_body_size: NonNegativeInt
+        integ_message_correlation_id: UUID | None = Field(None)
+        integ_message_id: UUID
+
+        @field_validator("integ_recipient_code", mode="before")
         @classmethod
         def recipient_code_validator(cls, v: str) -> list[str]:
             return v.split(sep=",")
 
-    id: UUID
-    delivery_tag: bytes
-    delivery_number: NonNegativeInt
-    durable: bool
-    priority: NonNegativeInt
-    properties: Properties
+    class Header(BaseModel):
+        delivery_count: NonNegativeInt
+        first_acquirer: bool
+        priority: NonNegativeInt
+        durable: bool
+
     body: bytes
+    delivery_annotations: Literal[None]
+    delivery_id: NonNegativeInt
+    delivery_tag: PositiveInt
+    footer: Literal[None]
+    header: Header
+    link_output_handle: NonNegativeInt
+    message_annotations: Literal[None]
+    message_format: NonNegativeInt
+    properties: Properties
+    application_properties: ApplicationProperties
+    rcv_settle_mode: Literal[None]
 
     @field_validator("delivery_tag", mode="before")
     @classmethod
-    def delivery_tag_validator(cls, v: str) -> bytes:
-        return bytes.fromhex(v)
+    def delivery_tag_validator(cls, v: bytes) -> PositiveInt:
+        return int.from_bytes(v, byteorder="little")
