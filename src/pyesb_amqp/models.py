@@ -1,14 +1,14 @@
 from uuid import UUID
 
-from pydantic import BaseModel, NonNegativeInt, field_validator
+from pydantic import BaseModel, Field, NonNegativeInt, field_validator
 
 
 class E1CMessage(BaseModel):
     class Properties(BaseModel, extra="allow"):
         integ_message_id: UUID
         integ_message_correlation_id: UUID
-        SenderCode: str
-        RecipientCode: list[str]
+        sender_code: str = Field(validation_alias="SenderCode")
+        recipient_code: list[str] = Field(validation_alias="RecipientCode")
         integ_sender_code: str
         integ_recipient_code: list[str]
         integ_message_body_size: NonNegativeInt
@@ -25,3 +25,8 @@ class E1CMessage(BaseModel):
     @classmethod
     def delivery_tag_validator(cls, v: str) -> bytes:
         return bytes.fromhex(v)
+
+    @field_validator("recipient_code", mode="before")
+    @classmethod
+    def recipient_code_validator(cls, v: str) -> list[str]:
+        return v.split(sep=",")
