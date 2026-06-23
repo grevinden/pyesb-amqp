@@ -1,9 +1,11 @@
+import re
+
 from fastapi import APIRouter, FastAPI
 
 from .models import ChannelDesription, ChannelMetadata, ChannelRuntime, Token
 
 
-def add_routes(*descr: ChannelDesription, app: APIRouter | FastAPI):
+def add_routes[T: APIRouter | FastAPI](*descr: ChannelDesription, app: T) -> T:
 
     @app.post("/auth/oidc/token")
     async def token_endpoint() -> Token:
@@ -21,3 +23,5 @@ def add_routes(*descr: ChannelDesription, app: APIRouter | FastAPI):
             items=[ChannelRuntime.Metadata.model_validate(v) for v in descr],
             port=6698,
         )
+
+    return app
