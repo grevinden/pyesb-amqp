@@ -217,6 +217,7 @@ impl PyAmqpMessage {
 
 /// A pending callback task: message data + channel to send the result back.
 struct CallbackTask {
+    target_address: Option<String>,
     py_msg: PyAmqpMessage,
     result_tx: oneshot::Sender<bool>,
 }
@@ -252,7 +253,7 @@ impl CallbackProcessor {
                                 let outcome = Python::try_attach(
                                     |py| -> PyResult<bool> {
                                         call_python_callback(
-                                            py, cb, task.py_msg, &loop_ref,
+                                                            py, cb, task.target_address, task.py_msg, &loop_ref,
                                         )
                                     },
                                 );
@@ -320,11 +321,13 @@ impl Drop for CallbackProcessor {
 fn call_python_callback(
     py: Python<'_>,
     cb: &Py<PyAny>,
+    target_address: Option<String>,
     py_msg: PyAmqpMessage,
     loop_ref: &Py<PyAny>,
 ) -> PyResult<bool> {
     let obj = Py::new(py, py_msg)?;
-    let result: Py<PyAny> = cb.call1(py, (obj,))?;
+    let channel = target_address.unwrap_or_default();
+    let result: Py<PyAny> = cb.call1(py, (channel, obj))?;
     let result_bound = result.bind(py);
 
     // Sync callback — extract bool directly.
@@ -721,6 +724,11 @@ async fn handle_receiver(
     let mut conn_dropped = true;
     while let Ok(delivery) = receiver.recv::<Body<Value>>().await {
         conn_dropped = false;
+        let target_address = receiver.target()
+            .as_ref()
+            .and_then(|t| t.address.as_ref())
+            .cloned();
+
         let msg_data = delivery_to_data(&delivery);
         let py_msg = PyAmqpMessage {
             delivery_id: msg_data.delivery_id,
@@ -741,6 +749,7 @@ async fn handle_receiver(
         // Send to callback thread via channel — tokio worker does NOT block.
         let (result_tx, result_rx) = oneshot::channel();
         let task = CallbackTask {
+            target_address,
             py_msg,
             result_tx,
         };

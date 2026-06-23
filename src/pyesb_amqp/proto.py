@@ -28,8 +28,15 @@ class AmqpMessage(Protocol):
 class AmqpMessageHandler(Protocol):
     """PEP 544 — асинхронный обработчик AMQP сообщений.
 
-    Должен быть async def, принимает ``AmqpMessage``, возвращает ``True`` (accept)
+    Первый аргумент — название канала (target address, который 1С указала
+    при отправке).  Второй — ``AmqpMessage``.  Возвращает ``True`` (accept)
     или ``False`` (reject).
+
+    Пример::
+
+        async def handler(channel: str, msg: AmqpMessage) -> bool:
+            print(f"[{channel}] ID={msg.id}")
+            return True
     """
 
-    async def __call__(self, msg: AmqpMessage) -> bool: ...
+    async def __call__(self, channel: str, msg: AmqpMessage) -> bool: ...
