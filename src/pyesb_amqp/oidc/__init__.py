@@ -1,3 +1,3 @@
-from .core import router
+from .core import add_routes
 
-__all__ = ["router"]
+__all__ = ["add_routes"]
