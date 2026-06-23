@@ -5,7 +5,7 @@ from pydantic.main import BaseModel
 
 
 class ProcessBase(BaseModel):
-    process: str = Field("pyesb", pattern=f"[a-z0-9]{1 - 15}")
+    process: str = Field("pyesb", pattern=r"[a-z0-9]{1-15}")
 
 
 class ProcessModel(ProcessBase):
@@ -15,7 +15,7 @@ class ProcessModel(ProcessBase):
 
 
 class ChannelBase(BaseModel):
-    channel: str = Field("pyesb", pattern=f"[a-z0-9]{1 - 15}")
+    channel: str = Field("pyesb", pattern=r"[a-z0-9]{1-15}")
 
 
 class ChannelModel(ChannelBase):
@@ -30,7 +30,7 @@ class ChannelMetadata(ProcessModel, ChannelModel):
 
 class ChannelRuntime(BaseModel):
     class Metadata(ProcessBase, ChannelBase):
-        destination: str = Field(pattern=f"[a-z0-9]{1 - 15}")
+        destination: str = Field(pattern=r"[a-z0-9]{1-15}")
 
     items: list[Metadata]
     port: PositiveInt = 6698
