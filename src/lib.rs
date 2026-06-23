@@ -18,7 +18,7 @@ use fe2o3_amqp::acceptor::{
 };
 use fe2o3_amqp::types::{
     definitions,
-    messaging::{ApplicationProperties, Body},
+    messaging::{ApplicationProperties, Body, MessageId, Properties},
     primitives::{SimpleValue, Value},
 };
 use fe2o3_amqp::link::delivery::DeliveryInfo;
@@ -53,7 +53,7 @@ pub struct PyAmqpMessage {
     pub header: Option<HashMap<String, serde_json::Value>>,
     pub delivery_annotations: Option<HashMap<String, serde_json::Value>>,
     pub message_annotations: Option<HashMap<String, serde_json::Value>>,
-    pub properties: Option<HashMap<String, serde_json::Value>>,
+    pub properties: Option<Properties>,
     pub application_properties: Option<HashMap<String, String>>,
     pub body: Vec<u8>,
     pub footer: Option<HashMap<String, serde_json::Value>>,
@@ -112,7 +112,82 @@ impl PyAmqpMessage {
 
     #[getter]
     fn properties<'py>(&self, py: Python<'py>) -> Option<Py<PyAny>> {
-        self.json_map(py, &self.properties)
+        self.properties.as_ref().map(|props| {
+            let d = pyo3::types::PyDict::new(py);
+
+            // message_id: varies — int/bytes/str
+            if let Some(ref v) = props.message_id {
+                match v {
+                    MessageId::Ulong(n) => d.set_item("message_id", *n).ok(),
+                    MessageId::Uuid(uuid) => {
+                        d.set_item("message_id", PyBytes::new(py, uuid.as_inner())).ok()
+                    }
+                    MessageId::Binary(b) => {
+                        d.set_item("message_id", PyBytes::new(py, b.as_ref())).ok()
+                    }
+                    MessageId::String(s) => d.set_item("message_id", s).ok(),
+                };
+            }
+
+            // user_id: bytes
+            if let Some(ref v) = props.user_id {
+                d.set_item("user_id", PyBytes::new(py, v.as_ref())).ok();
+            }
+
+            // to / reply_to: strings (Address = String)
+            if let Some(ref v) = props.to {
+                d.set_item("to", v).ok();
+            }
+            if let Some(ref v) = props.subject {
+                d.set_item("subject", v).ok();
+            }
+            if let Some(ref v) = props.reply_to {
+                d.set_item("reply_to", v).ok();
+            }
+
+            // correlation_id: same as message_id
+            if let Some(ref v) = props.correlation_id {
+                match v {
+                    MessageId::Ulong(n) => d.set_item("correlation_id", *n).ok(),
+                    MessageId::Uuid(uuid) => {
+                        d.set_item("correlation_id", PyBytes::new(py, uuid.as_inner())).ok()
+                    }
+                    MessageId::Binary(b) => {
+                        d.set_item("correlation_id", PyBytes::new(py, b.as_ref())).ok()
+                    }
+                    MessageId::String(s) => d.set_item("correlation_id", s).ok(),
+                };
+            }
+
+            // content_type / content_encoding: Symbol → str
+            if let Some(ref v) = props.content_type {
+                d.set_item("content_type", v.to_string()).ok();
+            }
+            if let Some(ref v) = props.content_encoding {
+                d.set_item("content_encoding", v.to_string()).ok();
+            }
+
+            // timestamps: ms since epoch as int
+            if let Some(ref v) = props.absolute_expiry_time {
+                d.set_item("absolute_expiry_time", v.milliseconds()).ok();
+            }
+            if let Some(ref v) = props.creation_time {
+                d.set_item("creation_time", v.milliseconds()).ok();
+            }
+
+            // group_id / reply_to_group_id: strings
+            if let Some(ref v) = props.group_id {
+                d.set_item("group_id", v).ok();
+            }
+            if let Some(ref v) = props.group_sequence {
+                d.set_item("group_sequence", *v).ok();
+            }
+            if let Some(ref v) = props.reply_to_group_id {
+                d.set_item("reply_to_group_id", v).ok();
+            }
+
+            d.into()
+        })
     }
 
     #[getter]
@@ -735,49 +810,6 @@ fn header_to_json(hdr: &fe2o3_amqp::types::messaging::Header) -> HashMap<String,
     m
 }
 
-fn properties_to_json(props: &fe2o3_amqp::types::messaging::Properties) -> HashMap<String, serde_json::Value> {
-    let mut m = HashMap::new();
-    if let Some(ref v) = props.message_id {
-        m.insert("message_id".into(), serde_json::json!(format!("{:?}", v)));
-    }
-    if let Some(ref v) = props.user_id {
-        m.insert("user_id".into(), serde_json::json!(v.as_ref()));
-    }
-    if let Some(ref v) = props.to {
-        m.insert("to".into(), serde_json::json!(v));
-    }
-    if let Some(ref v) = props.subject {
-        m.insert("subject".into(), serde_json::json!(v));
-    }
-    if let Some(ref v) = props.reply_to {
-        m.insert("reply_to".into(), serde_json::json!(v));
-    }
-    if let Some(ref v) = props.correlation_id {
-        m.insert("correlation_id".into(), serde_json::json!(format!("{:?}", v)));
-    }
-    if let Some(ref v) = props.content_type {
-        m.insert("content_type".into(), serde_json::json!(v.as_str()));
-    }
-    if let Some(ref v) = props.content_encoding {
-        m.insert("content_encoding".into(), serde_json::json!(v.as_str()));
-    }
-    if let Some(ref v) = props.absolute_expiry_time {
-        m.insert("absolute_expiry_time".into(), serde_json::json!(v.milliseconds()));
-    }
-    if let Some(ref v) = props.creation_time {
-        m.insert("creation_time".into(), serde_json::json!(v.milliseconds()));
-    }
-    if let Some(ref v) = props.group_id {
-        m.insert("group_id".into(), serde_json::json!(v));
-    }
-    if let Some(ref v) = props.group_sequence {
-        m.insert("group_sequence".into(), serde_json::json!(v));
-    }
-    if let Some(ref v) = props.reply_to_group_id {
-        m.insert("reply_to_group_id".into(), serde_json::json!(v));
-    }
-    m
-}
 
 fn delivery_to_data(delivery: &Delivery<Body<Value>>) -> MessageData {
     let message = delivery.message();
@@ -853,7 +885,7 @@ fn delivery_to_data(delivery: &Delivery<Body<Value>>) -> MessageData {
         });
 
     // -- properties -------------------------------------------------
-    let properties = message.properties.as_ref().map(properties_to_json);
+    let properties = message.properties.clone();
 
     // -- application_properties -------------------------------------
     let application_properties = message
@@ -890,7 +922,7 @@ struct MessageData {
     header: Option<HashMap<String, serde_json::Value>>,
     delivery_annotations: Option<HashMap<String, serde_json::Value>>,
     message_annotations: Option<HashMap<String, serde_json::Value>>,
-    properties: Option<HashMap<String, serde_json::Value>>,
+    properties: Option<Properties>,
     application_properties: HashMap<String, String>,
     body: Vec<u8>,
     footer: Option<HashMap<String, serde_json::Value>>,
