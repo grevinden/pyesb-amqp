@@ -2,8 +2,6 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-
-
 use anyhow::Context;
 use pyo3::exceptions::{PyException, PyTypeError};
 use pyo3::prelude::*;
@@ -20,9 +18,10 @@ use fe2o3_amqp::acceptor::{
 };
 use fe2o3_amqp::types::{
     definitions,
-    messaging::{ApplicationProperties, Body, MessageId},
+    messaging::{ApplicationProperties, Body},
     primitives::{SimpleValue, Value},
 };
+use fe2o3_amqp::link::delivery::DeliveryInfo;
 use fe2o3_amqp::{Delivery, Receiver};
 
 /// Максимум сообщений в очереди к Python-хендлеру.
@@ -34,49 +33,104 @@ const CALLBACK_CHANNEL_CAP: usize = 1_000;
 // Python-facing message type
 // ---------------------------------------------------------------------------
 
-/// Represents a received AMQP message.
+/// AmqpMessage — 1:1 с полями Message<Body<Value>> из fe2o3-amqp.
+/// Сложные типы разобраны в плоские HashMap<String, serde_json::Value>.
 #[pyclass(name = "AmqpMessage", module = "pyesb_amqp", skip_from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyAmqpMessage {
-    /// AMQP message-id from the Properties section (the meaningful identifier).
-    /// None if the sender did not set it.
+    // --- Delivery ---
     #[pyo3(get)]
-    pub id: Option<String>,
-    /// Delivery tag (hex-encoded) — transport-level counter assigned by the link.
+    pub delivery_id: i64,
+    pub delivery_tag: Vec<u8>,
     #[pyo3(get)]
-    pub delivery_tag: String,
-    /// Delivery tag as decimal number (little-endian u64).
+    pub message_format: Option<i64>,
     #[pyo3(get)]
-    pub delivery_number: u64,
-    /// Raw message body bytes.
+    pub rcv_settle_mode: Option<String>,
+    #[pyo3(get)]
+    pub link_output_handle: u32,
+
+    // --- Message ---
+    pub header: Option<HashMap<String, serde_json::Value>>,
+    pub delivery_annotations: Option<HashMap<String, serde_json::Value>>,
+    pub message_annotations: Option<HashMap<String, serde_json::Value>>,
+    pub properties: Option<HashMap<String, serde_json::Value>>,
+    pub application_properties: Option<HashMap<String, String>>,
     pub body: Vec<u8>,
-    /// Application properties as string key-value pairs.
-    #[pyo3(get)]
-    pub properties: HashMap<String, String>,
-    /// Durable flag from the message header.
-    #[pyo3(get)]
-    pub durable: bool,
-    /// Priority from the message header (0-255).
-    #[pyo3(get)]
-    pub priority: u8,
+    pub footer: Option<HashMap<String, serde_json::Value>>,
+}
+
+
+// Helper methods — not exposed to Python
+impl PyAmqpMessage {
+    fn json_map<'py>(&self, py: Python<'py>, map: &Option<HashMap<String, serde_json::Value>>) -> Option<Py<PyAny>> {
+        map.as_ref().map(|m| {
+            let s = serde_json::to_string(m).unwrap_or_default();
+            py.import("json")
+                .and_then(|mod_| mod_.call_method1("loads", (s,)))
+                .map(|b| b.into())
+                .unwrap_or_else(|_| py.None())
+        })
+    }
+
+    fn str_map<'py>(&self, py: Python<'py>, map: &Option<HashMap<String, String>>) -> Option<Py<PyAny>> {
+        map.as_ref().map(|m| {
+            let s = serde_json::to_string(m).unwrap_or_default();
+            py.import("json")
+                .and_then(|mod_| mod_.call_method1("loads", (s,)))
+                .map(|b| b.into())
+                .unwrap_or_else(|_| py.None())
+        })
+    }
 }
 
 #[pymethods]
 impl PyAmqpMessage {
-    /// Body as Python `bytes`, not `list[int]`.
+    #[getter]
+    fn delivery_tag<'py>(&self, py: Python<'py>) -> Py<PyBytes> {
+        PyBytes::new(py, &self.delivery_tag).into()
+    }
+
     #[getter]
     fn body<'py>(&self, py: Python<'py>) -> Py<PyBytes> {
         PyBytes::new(py, &self.body).into()
     }
 
+    #[getter]
+    fn header<'py>(&self, py: Python<'py>) -> Option<Py<PyAny>> {
+        self.json_map(py, &self.header)
+    }
+
+    #[getter]
+    fn delivery_annotations<'py>(&self, py: Python<'py>) -> Option<Py<PyAny>> {
+        self.json_map(py, &self.delivery_annotations)
+    }
+
+    #[getter]
+    fn message_annotations<'py>(&self, py: Python<'py>) -> Option<Py<PyAny>> {
+        self.json_map(py, &self.message_annotations)
+    }
+
+    #[getter]
+    fn properties<'py>(&self, py: Python<'py>) -> Option<Py<PyAny>> {
+        self.json_map(py, &self.properties)
+    }
+
+    #[getter]
+    fn application_properties<'py>(&self, py: Python<'py>) -> Option<Py<PyAny>> {
+        self.str_map(py, &self.application_properties)
+    }
+
+    #[getter]
+    fn footer<'py>(&self, py: Python<'py>) -> Option<Py<PyAny>> {
+        self.json_map(py, &self.footer)
+    }
+
     fn __repr__(&self) -> String {
         format!(
-            "AmqpMessage(id={:?}, delivery_tag={}, delivery_number={}, body_len={}, props={})",
-            self.id,
-            self.delivery_tag,
-            self.delivery_number,
+            "AmqpMessage(delivery_id={}, delivery_tag={}, body_len={})",
+            self.delivery_id,
+            hex::encode(&self.delivery_tag),
             self.body.len(),
-            self.properties.len()
         )
     }
 }
@@ -594,13 +648,18 @@ async fn handle_receiver(
         conn_dropped = false;
         let msg_data = delivery_to_data(&delivery);
         let py_msg = PyAmqpMessage {
-            id: msg_data.id,
+            delivery_id: msg_data.delivery_id,
             delivery_tag: msg_data.delivery_tag,
-            delivery_number: msg_data.delivery_number,
-            body: msg_data.body,
+            message_format: msg_data.message_format,
+            rcv_settle_mode: msg_data.rcv_settle_mode,
+            link_output_handle: msg_data.link_output_handle,
+            header: msg_data.header,
+            delivery_annotations: msg_data.delivery_annotations,
+            message_annotations: msg_data.message_annotations,
             properties: msg_data.properties,
-            durable: msg_data.durable,
-            priority: msg_data.priority,
+            application_properties: Some(msg_data.application_properties),
+            body: msg_data.body,
+            footer: msg_data.footer,
         };
         // msg_data dropped here; fields moved into py_msg
 
@@ -664,58 +723,177 @@ async fn handle_receiver(
 // Message conversion
 // ---------------------------------------------------------------------------
 
+fn header_to_json(hdr: &fe2o3_amqp::types::messaging::Header) -> HashMap<String, serde_json::Value> {
+    let mut m = HashMap::new();
+    m.insert("durable".into(), serde_json::Value::Bool(hdr.durable));
+    m.insert("priority".into(), serde_json::json!(hdr.priority.0));
+    if let Some(ttl) = &hdr.ttl {
+        m.insert("ttl".into(), serde_json::json!(ttl));
+    }
+    m.insert("first_acquirer".into(), serde_json::Value::Bool(hdr.first_acquirer));
+    m.insert("delivery_count".into(), serde_json::json!(hdr.delivery_count));
+    m
+}
+
+fn properties_to_json(props: &fe2o3_amqp::types::messaging::Properties) -> HashMap<String, serde_json::Value> {
+    let mut m = HashMap::new();
+    if let Some(ref v) = props.message_id {
+        m.insert("message_id".into(), serde_json::json!(format!("{:?}", v)));
+    }
+    if let Some(ref v) = props.user_id {
+        m.insert("user_id".into(), serde_json::json!(v.as_ref()));
+    }
+    if let Some(ref v) = props.to {
+        m.insert("to".into(), serde_json::json!(v));
+    }
+    if let Some(ref v) = props.subject {
+        m.insert("subject".into(), serde_json::json!(v));
+    }
+    if let Some(ref v) = props.reply_to {
+        m.insert("reply_to".into(), serde_json::json!(v));
+    }
+    if let Some(ref v) = props.correlation_id {
+        m.insert("correlation_id".into(), serde_json::json!(format!("{:?}", v)));
+    }
+    if let Some(ref v) = props.content_type {
+        m.insert("content_type".into(), serde_json::json!(v.as_str()));
+    }
+    if let Some(ref v) = props.content_encoding {
+        m.insert("content_encoding".into(), serde_json::json!(v.as_str()));
+    }
+    if let Some(ref v) = props.absolute_expiry_time {
+        m.insert("absolute_expiry_time".into(), serde_json::json!(v.milliseconds()));
+    }
+    if let Some(ref v) = props.creation_time {
+        m.insert("creation_time".into(), serde_json::json!(v.milliseconds()));
+    }
+    if let Some(ref v) = props.group_id {
+        m.insert("group_id".into(), serde_json::json!(v));
+    }
+    if let Some(ref v) = props.group_sequence {
+        m.insert("group_sequence".into(), serde_json::json!(v));
+    }
+    if let Some(ref v) = props.reply_to_group_id {
+        m.insert("reply_to_group_id".into(), serde_json::json!(v));
+    }
+    m
+}
+
 fn delivery_to_data(delivery: &Delivery<Body<Value>>) -> MessageData {
     let message = delivery.message();
 
-    // -- delivery tag as hex + decimal -----------------------------------
-    let delivery_tag = hex::encode(delivery.delivery_tag().as_ref());
-    let delivery_number = tag_to_u64(delivery.delivery_tag().as_ref());
+    // -- Delivery fields --------------------------------------------
+    // DeliveryNumber = u32, get by value via deref
+    let delivery_id = *delivery.delivery_id() as i64;
+    let delivery_tag = delivery.delivery_tag().as_ref().to_vec();
+    // message_format() returns &Option<MessageFormat>
+    // MessageFormat = u32 (type alias), no .0 needed
+    let message_format = delivery.message_format().map(|mf| mf as i64);
+    // rcv_settle_mode is pub(crate) — get via DeliveryInfo
+    let info = DeliveryInfo::from(delivery);
+    let rcv_settle_mode = info
+        .rcv_settle_mode()
+        .as_ref()
+        .map(|m| format!("{:?}", m));
+    // Handle is newtype over u32
+    let link_output_handle = delivery.handle().0;
 
-    // -- AMQP message-id from Properties section ------------------------
-    let id = message.properties.as_ref()
-        .and_then(|props| props.message_id.as_ref())
-        .map(message_id_to_string);
-
-    // -- body -----------------------------------------------------------
+    // -- body -------------------------------------------------------
     let body = body_to_bytes(delivery.body());
 
-    // -- application properties -----------------------------------------
-    let properties = extract_properties(message.application_properties.as_ref());
+    // -- header -----------------------------------------------------
+    let header = message.header.as_ref().map(header_to_json);
 
-    // -- header fields --------------------------------------------------
-    let (durable, priority) = match message.header.as_ref() {
-        Some(hdr) => (hdr.durable, hdr.priority.0),
-        None => (false, 4u8),
-    };
+    // -- annotations (skip complex type conversion) -----------------
+    // DeliveryAnnotations, MessageAnnotations, Footer are different types
+    // from Annotations — just serialize through serde_json::to_value
+    let delivery_annotations = message
+        .delivery_annotations
+        .as_ref()
+        .and_then(|ann| serde_json::to_value(ann).ok())
+        .and_then(|v| match v {
+            serde_json::Value::Object(obj) if !obj.is_empty() => {
+                let mut map = HashMap::new();
+                for (k, v) in obj {
+                    map.insert(k, v);
+                }
+                Some(map)
+            }
+            _ => None,
+        });
+
+    let message_annotations = message
+        .message_annotations
+        .as_ref()
+        .and_then(|ann| serde_json::to_value(ann).ok())
+        .and_then(|v| match v {
+            serde_json::Value::Object(obj) if !obj.is_empty() => {
+                let mut map = HashMap::new();
+                for (k, v) in obj {
+                    map.insert(k, v);
+                }
+                Some(map)
+            }
+            _ => None,
+        });
+
+    let footer = message
+        .footer
+        .as_ref()
+        .and_then(|ann| serde_json::to_value(ann).ok())
+        .and_then(|v| match v {
+            serde_json::Value::Object(obj) if !obj.is_empty() => {
+                let mut map = HashMap::new();
+                for (k, v) in obj {
+                    map.insert(k, v);
+                }
+                Some(map)
+            }
+            _ => None,
+        });
+
+    // -- properties -------------------------------------------------
+    let properties = message.properties.as_ref().map(properties_to_json);
+
+    // -- application_properties -------------------------------------
+    let application_properties = message
+        .application_properties
+        .as_ref()
+        .map(|ap| extract_properties(Some(ap)));
 
     MessageData {
-        id,
+        delivery_id,
         delivery_tag,
-        delivery_number,
-        body,
+        message_format,
+        rcv_settle_mode,
+        link_output_handle,
+        header,
+        delivery_annotations,
+        message_annotations,
         properties,
-        durable,
-        priority,
+        application_properties: application_properties.unwrap_or_default(),
+        body,
+        footer,
     }
-}
-
-/// Parse delivery tag bytes as little-endian u64.
-fn tag_to_u64(tag: &[u8]) -> u64 {
-    let mut buf = [0u8; 8];
-    let len = tag.len().min(8);
-    buf[..len].copy_from_slice(&tag[..len]);
-    u64::from_le_bytes(buf)
 }
 
 /// Plain data struct used before conversion to the Python class.
 struct MessageData {
-    id: Option<String>,
-    delivery_tag: String,
-    delivery_number: u64,
+    // Delivery
+    delivery_id: i64,
+    delivery_tag: Vec<u8>,
+    message_format: Option<i64>,
+    rcv_settle_mode: Option<String>,
+    link_output_handle: u32,
+
+    // Message
+    header: Option<HashMap<String, serde_json::Value>>,
+    delivery_annotations: Option<HashMap<String, serde_json::Value>>,
+    message_annotations: Option<HashMap<String, serde_json::Value>>,
+    properties: Option<HashMap<String, serde_json::Value>>,
+    application_properties: HashMap<String, String>,
     body: Vec<u8>,
-    properties: HashMap<String, String>,
-    durable: bool,
-    priority: u8,
+    footer: Option<HashMap<String, serde_json::Value>>,
 }
 
 fn body_to_bytes(body: &Body<Value>) -> Vec<u8> {
@@ -724,7 +902,11 @@ fn body_to_bytes(body: &Body<Value>) -> Vec<u8> {
             .iter()
             .flat_map(|data| data.0.as_ref().to_vec())
             .collect(),
-        Body::Value(amqp_val) => serde_json::to_vec(&amqp_val.0).unwrap_or_default(),
+        Body::Value(amqp_val) => match &amqp_val.0 {
+            Value::Binary(b) => b.as_ref().to_vec(),
+            Value::String(s) => s.as_bytes().to_vec(),
+            other => serde_json::to_vec(other).unwrap_or_default(),
+        },
         Body::Sequence(batch) => serde_json::to_vec(batch).unwrap_or_default(),
         Body::Empty => vec![],
     }
@@ -741,15 +923,6 @@ fn extract_properties(app_props: Option<&ApplicationProperties>) -> HashMap<Stri
     map
 }
 
-/// Convert an AMQP MessageId to a Python-friendly string.
-fn message_id_to_string(msg_id: &MessageId) -> String {
-    match msg_id {
-        MessageId::Ulong(val) => val.to_string(),
-        MessageId::Uuid(val) => format!("{:x}", val),
-        MessageId::Binary(val) => hex::encode(val.as_ref()),
-        MessageId::String(val) => val.clone(),
-    }
-}
 
 fn simple_value_to_string(val: &SimpleValue) -> String {
     match val {
