@@ -670,7 +670,7 @@ async fn handle_connection(
             });
         }
         Err(e) => {
-            error!("Session accept error: {e:?}");
+            error!("Session accept error: {e:#}");
             info!("Connection handler done");
         }
     }
