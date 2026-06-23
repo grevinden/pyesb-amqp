@@ -1,9 +1,9 @@
 from fastapi import APIRouter, FastAPI
 
-from .models import ChannelMetadata, ChannelRuntime, Token
+from .models import ChannelDesription, ChannelMetadata, ChannelRuntime, Token
 
 
-def add_routes(*descr: ChannelMetadata, app: APIRouter | FastAPI):
+def add_routes(*descr: ChannelDesription, app: APIRouter | FastAPI):
 
     @app.post("/auth/oidc/token")
     async def token_endpoint() -> Token:

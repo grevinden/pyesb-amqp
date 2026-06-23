@@ -36,7 +36,7 @@ class ChannelRuntime(BaseModel):
     port: PositiveInt = 6698
 
 
-class ChannelsDesription(ChannelMetadata, ChannelRuntime): ...
+class ChannelDesription(ChannelMetadata, ChannelRuntime.Metadata): ...
 
 
 class Token(BaseModel):

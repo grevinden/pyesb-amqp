@@ -8,6 +8,6 @@ from __future__ import annotations
 
 from .core import AmqpServer
 from .models import E1CMessage
-from .proto import AmqpMessage, AmqpMessageHandler
+from .proto import AmqpMessage
 
-__all__ = ["AmqpMessage", "AmqpMessageHandler", "AmqpServer", "E1CMessage"]
+__all__ = ["AmqpMessage", "AmqpServer", "E1CMessage"]
