@@ -3,6 +3,9 @@ name = "pyesb_amqp"
 version = "0.0.0"
 edition = "2021"
 
+[patch.crates-io]
+fe2o3-amqp = { path = "patched-fe2o3-amqp" }
+
 [lib]
 name = "pyesb_amqp"
 crate-type = ["cdylib"]
