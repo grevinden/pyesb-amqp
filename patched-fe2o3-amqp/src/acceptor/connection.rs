@@ -20,7 +20,7 @@ use crate::{
     acceptor::sasl_acceptor::SaslServerFrame,
     connection::{
         self, engine::ConnectionEngine, ConnectionHandle, ConnectionInnerError, OpenError,
-        DEFAULT_CONTROL_CHAN_BUF,
+        DEFAULT_CONTROL_CHAN_BUF, DEFAULT_OUTGOING_BUFFER_SIZE,
     },
     endpoint::{self, IncomingChannel, OutgoingChannel},
     frames::{
@@ -524,10 +524,39 @@ impl endpoint::Connection for ListenerConnection {
                 relay.send(sframe).await?;
             }
             Ok(None) | Err(ConnectionInnerError::NotFound(_)) => {
-                // Remotely initiated session — allocate and forward
+                // Remotely initiated session — eagerly allocate relay so pipelined
+                // Attach/Flow/Transfer frames can be forwarded before the session
+                // engine is launched.  1С:Enterprise pipelines Begin + Attach.
+                let (incoming_tx, incoming_rx) =
+                    mpsc::channel(DEFAULT_OUTGOING_BUFFER_SIZE);
+                let outgoing_channel = self
+                    .connection
+                    .allocate_session(incoming_tx)
+                    .map_err(|_| Self::Error::NotImplemented(None))?;
+
+                // Get the relay just allocated so we can register it
+                // for the incoming channel
+                let relay = self
+                    .connection
+                    .session_by_outgoing_channel
+                    .get(outgoing_channel.0 as usize)
+                    .ok_or_else(|| {
+                        Self::Error::NotFound(Some(
+                            "Relay not found after session allocation".to_string(),
+                        ))
+                    })?;
+
+                // Register relay for the incoming channel so the engine's
+                // forward_to_session can deliver pipelined frames immediately
+                self.connection
+                    .session_by_incoming_channel
+                    .insert(channel, relay.clone());
+
                 let incoming_session = IncomingSession {
                     channel: channel.0,
                     begin,
+                    incoming_rx: Some(incoming_rx),
+                    outgoing_channel: Some(outgoing_channel),
                 };
                 self.session_listener
                     .send(incoming_session)

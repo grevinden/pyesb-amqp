@@ -17,6 +17,10 @@ use fe2o3_amqp_types::{
     definitions::{ReceiverSettleMode, SenderSettleMode},
     performatives::Begin,
 };
+use tokio::sync::mpsc;
+
+use crate::endpoint::OutgoingChannel;
+use crate::session::frame::SessionIncomingItem;
 
 pub use self::connection::{ConnectionAcceptor, ListenerConnectionHandle};
 pub use self::link::{LinkAcceptor, LinkEndpoint};
@@ -31,6 +35,16 @@ pub struct IncomingSession {
 
     /// The Begin performative sent by the remote peer
     pub begin: Begin,
+
+    /// Pre-allocated incoming channel receiver (for pipelining support).
+    /// When `Some`, the session relay was already registered in
+    /// `session_by_incoming_channel` so that pipelined Attach/Flow/Transfer
+    /// frames can be forwarded before `accept_incoming_session` runs.
+    pub(crate) incoming_rx: Option<mpsc::Receiver<SessionIncomingItem>>,
+
+    /// Pre-allocated outgoing channel (for pipelining support).
+    /// Corresponds to the outgoing_channel returned by `allocate_session`.
+    pub(crate) outgoing_channel: Option<OutgoingChannel>,
 }
 
 /// The supported sender-settle-modes for the link acceptor

@@ -20,7 +20,7 @@ use crate::{
         self,
         engine::SessionEngine,
         frame::{SessionFrame, SessionIncomingItem, SessionOutgoingItem},
-        error::{AllocLinkError, BeginError, Error, SessionInnerError}, SessionHandle, 
+        error::{AllocLinkError, BeginError, Error, SessionInnerError}, SessionHandle,
         DEFAULT_SESSION_CONTROL_BUFFER_SIZE,
     },
     util::Initialized,
@@ -31,7 +31,7 @@ use super::{builder::Builder, IncomingSession, ListenerConnectionHandle};
 
 cfg_transaction! {
     use fe2o3_amqp_types::{messaging::Accepted, transaction::TransactionError};
-    
+
     use crate::transaction::{manager::TransactionManager, session::TxnSession, AllocTxnIdError};
 }
 
@@ -193,7 +193,7 @@ impl SessionAcceptor {
                         session: listener_session,
                         txn_manager,
                     };
-    
+
                     let engine = SessionEngine::begin_listener_session(
                         connection.control.clone(),
                         listener_session,
@@ -223,40 +223,55 @@ impl SessionAcceptor {
 
     /// Accept an incoming session
     pub async fn accept_incoming_session(
-        &self,
-        incoming_session: IncomingSession,
-        connection: &mut ListenerConnectionHandle,
-    ) -> Result<ListenerSessionHandle, BeginError> {
-        let local_state = SessionState::Unmapped;
-        let (session_control_tx, session_control_rx) =
-            mpsc::channel::<SessionControl>(DEFAULT_SESSION_CONTROL_BUFFER_SIZE);
-        let (incoming_tx, incoming_rx) = mpsc::channel(self.0.buffer_size);
-        let (outgoing_tx, outgoing_rx) = mpsc::channel(self.0.buffer_size);
-        let (link_listener_tx, link_listener_rx) = mpsc::channel(self.0.buffer_size);
+            &self,
+            incoming_session: IncomingSession,
+            connection: &mut ListenerConnectionHandle,
+        ) -> Result<ListenerSessionHandle, BeginError> {
+            let local_state = SessionState::Unmapped;
+            let (session_control_tx, session_control_rx) =
+                mpsc::channel::<SessionControl>(DEFAULT_SESSION_CONTROL_BUFFER_SIZE);
+            let (outgoing_tx, outgoing_rx) = mpsc::channel(self.0.buffer_size);
+            let (link_listener_tx, link_listener_rx) = mpsc::channel(self.0.buffer_size);
 
-        // create session in connection::Engine
-        let outgoing_channel = match connection.allocate_session(incoming_tx).await {
-            Ok(channel) => channel,
-            Err(error) => match error {
-                AllocSessionError::IllegalState => return Err(BeginError::IllegalConnectionState),
-                AllocSessionError::ChannelMaxReached => {
-                    // A peer that receives a channel number outside the supported range MUST close the connection
-                    // with the framing-error error-code
-                    let error = definitions::Error::new(
-                        ConnectionError::FramingError,
-                        "Exceeding channel-max".to_string(),
-                        None,
-                    );
-                    connection
-                        .control
-                        .send(ConnectionControl::Close(Some(error)))
-                        .await
-                        .map_err(|_| BeginError::IllegalConnectionState)?;
-
-                    return Err(BeginError::LocalChannelMaxReached);
+            // Use pre-allocated channels (from eager allocation in on_incoming_begin)
+            // or allocate fresh ones for normal (non-pipelined) sessions.
+            let (outgoing_channel, incoming_rx) = match (
+                incoming_session.outgoing_channel,
+                incoming_session.incoming_rx,
+            ) {
+                (Some(ch), Some(rx)) => {
+                    // Eagerly allocated by ListenerConnection::on_incoming_begin.
+                    // The relay is already registered in session_by_incoming_channel,
+                    // so pipelined frames can be forwarded before we get here.
+                    (ch, rx)
                 }
-            },
-        };
+                _ => {
+                    // Normal (non-pipelined) path — allocate session now.
+                    let (incoming_tx, incoming_rx) = mpsc::channel(self.0.buffer_size);
+                    let outgoing_channel = match connection.allocate_session(incoming_tx).await {
+                        Ok(channel) => channel,
+                        Err(error) => match error {
+                            AllocSessionError::IllegalState => {
+                                return Err(BeginError::IllegalConnectionState)
+                            }
+                            AllocSessionError::ChannelMaxReached => {
+                                let error = definitions::Error::new(
+                                    ConnectionError::FramingError,
+                                    "Exceeding channel-max".to_string(),
+                                    None,
+                                );
+                                connection
+                                    .control
+                                    .send(ConnectionControl::Close(Some(error)))
+                                    .await
+                                    .map_err(|_| BeginError::IllegalConnectionState)?;
+                                return Err(BeginError::LocalChannelMaxReached);
+                            }
+                        },
+                    };
+                    (outgoing_channel, incoming_rx)
+                }
+            };
         let mut session = self.0.clone().into_session(outgoing_channel, local_state);
         session.on_incoming_begin(
             IncomingChannel(incoming_session.channel),
@@ -528,8 +543,8 @@ cfg_transaction! {
             Err(AllocTxnIdError::NotImplemented)
         }
     }
-    
-    
+
+
     impl endpoint::HandleDischarge for ListenerSession {
         async fn commit_transaction(
             &mut self,
@@ -538,7 +553,7 @@ cfg_transaction! {
             // FIXME: This should be impossible
             Ok(Err(TransactionError::UnknownId))
         }
-    
+
         fn rollback_transaction(
             &mut self,
             _txn_id: fe2o3_amqp_types::transaction::TransactionId,
