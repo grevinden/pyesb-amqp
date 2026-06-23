@@ -9,7 +9,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 pyo3 = "0.29.0"
-fe2o3-amqp = { version = "0.14", features = ["acceptor"] }
+fe2o3-amqp = { version = "0.14", features = ["acceptor", "tracing"] }
 tokio = { version = "1", features = ["full"] }
 serde_json = "1"
 serde = "1"
