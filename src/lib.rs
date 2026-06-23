@@ -538,7 +538,9 @@ async fn handle_session(
         .verify_incoming_target(false)
         .build();
 
+    let mut has_links = false;
     while let Ok(link) = link_acceptor.accept(&mut session).await {
+        has_links = true;
         match link {
             LinkEndpoint::Sender(_sender) => {
                 warn!("Sender link from remote peer is not supported — dropping");
@@ -554,8 +556,13 @@ async fn handle_session(
         }
     }
 
-    if let Err(e) = session.on_end().await {
-        error!("Session end error: {e}");
+    // Если линки были — пробуем штатно закрыть сессию.  При разрыве соединения
+    // 1С on_end() упадёт — логируем на info как ожидаемое поведение.
+    if has_links {
+        match session.on_end().await {
+            Ok(_) => {}
+            Err(e) => info!("Session already ended (1C disconnected): {e}"),
+        }
     }
     Ok(())
 }
@@ -564,7 +571,11 @@ async fn handle_receiver(
     mut receiver: Receiver,
     task_tx: mpsc::Sender<CallbackTask>,
 ) -> anyhow::Result<()> {
+    // recv() returns Err when the connection/session is dropped by the peer.
+    // In that case the receiver is already closed — do NOT call .close().
+    let mut conn_dropped = true;
     while let Ok(delivery) = receiver.recv::<Body<Value>>().await {
+        conn_dropped = false;
         let msg_data = delivery_to_data(&delivery);
         let py_msg = PyAmqpMessage {
             id: msg_data.id,
@@ -619,8 +630,14 @@ async fn handle_receiver(
         }
     }
 
-    if let Err(e) = receiver.close().await {
-        error!("Receiver close error: {e}");
+    // Если хотя бы одно сообщение было получено — пробуем штатно закрыть
+    // receiver.  При разрыве соединения 1С close() упадёт — логируем на info
+    // как ожидаемое поведение.
+    if !conn_dropped {
+        match receiver.close().await {
+            Ok(_) => {}
+            Err(e) => info!("Receiver already closed (1C disconnected): {e}"),
+        }
     }
     Ok(())
 }

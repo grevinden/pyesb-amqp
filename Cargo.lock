@@ -112,7 +112,7 @@ dependencies = [
 [[package]]
 name = "fe2o3-amqp"
 version = "0.15.1"
-source = "git+https://github.com/grevinden/fe2o3-amqp.git#334e77d0dcfab2211db79c6375677cc840fbe73a"
+source = "git+https://github.com/grevinden/fe2o3-amqp.git#66ed1dc675b7964c1c55c488f6adcda1aaa5b77b"
 dependencies = [
  "bytes",
  "fe2o3-amqp-types",
@@ -136,7 +136,7 @@ dependencies = [
 [[package]]
 name = "fe2o3-amqp-types"
 version = "0.14.0"
-source = "git+https://github.com/grevinden/fe2o3-amqp.git#334e77d0dcfab2211db79c6375677cc840fbe73a"
+source = "git+https://github.com/grevinden/fe2o3-amqp.git#66ed1dc675b7964c1c55c488f6adcda1aaa5b77b"
 dependencies = [
  "ordered-float",
  "serde",
@@ -707,7 +707,7 @@ dependencies = [
 [[package]]
 name = "serde_amqp"
 version = "0.14.1"
-source = "git+https://github.com/grevinden/fe2o3-amqp.git#334e77d0dcfab2211db79c6375677cc840fbe73a"
+source = "git+https://github.com/grevinden/fe2o3-amqp.git#66ed1dc675b7964c1c55c488f6adcda1aaa5b77b"
 dependencies = [
  "bytes",
  "indexmap",
@@ -721,7 +721,7 @@ dependencies = [
 [[package]]
 name = "serde_amqp_derive"
 version = "0.3.0"
-source = "git+https://github.com/grevinden/fe2o3-amqp.git#334e77d0dcfab2211db79c6375677cc840fbe73a"
+source = "git+https://github.com/grevinden/fe2o3-amqp.git#66ed1dc675b7964c1c55c488f6adcda1aaa5b77b"
 dependencies = [
  "convert_case",
  "darling",
