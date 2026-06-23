@@ -166,6 +166,24 @@ async fn handle_receiver(
             .and_then(|t| t.address.as_ref())
             .cloned();
 
+        // --- log received message ---
+        let body_len = match delivery.body() {
+            Body::Data(batch) => batch.iter().map(|d| d.0.as_ref().len()).sum::<usize>(),
+            Body::Value(v) => match &v.0 {
+                Value::Binary(b) => b.as_ref().len(),
+                Value::String(s) => s.len(),
+                _ => 0,
+            },
+            Body::Sequence(s) => s.len(),
+            Body::Empty => 0,
+        };
+        info!(
+            "RECV: delivery_id={}, body_len={}, target={:?}",
+            *delivery.delivery_id() as i64,
+            body_len,
+            target_address,
+        );
+
         let msg_data = delivery_to_data(&delivery);
         let py_msg: PyAmqpMessage = msg_data.into();
 
@@ -187,6 +205,7 @@ async fn handle_receiver(
                 .await?;
             continue;
         }
+        info!("TASK: sent to callback processor (id={})", *delivery.delivery_id() as i64);
 
         // Non-blocking wait for the callback result with timeout.
         // Страховка: зависший Python-хендлер не блокирует канал навсегда.
@@ -196,13 +215,20 @@ async fn handle_receiver(
         )
         .await
         {
-            Ok(Ok(val)) => val,
+            Ok(Ok(true)) => {
+                info!("RESULT: accepted (id={})", *delivery.delivery_id() as i64);
+                true
+            }
+            Ok(Ok(false)) => {
+                info!("RESULT: rejected by handler (id={})", *delivery.delivery_id() as i64);
+                false
+            }
             Ok(Err(_)) => {
-                error!("Callback thread dropped without responding — rejecting");
+                error!("RESULT: callback thread dropped (id={})", *delivery.delivery_id() as i64);
                 false
             }
             Err(_) => {
-                error!("Python handler timed out after 30s — rejecting message");
+                error!("RESULT: timed out after 30s (id={})", *delivery.delivery_id() as i64);
                 false
             }
         };

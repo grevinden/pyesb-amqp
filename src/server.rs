@@ -102,6 +102,14 @@ impl PyServer {
             .try_init()
             .ok();
 
+        info!(
+            "pyesb_amqp starting — commit={}, host={}, port={}, container_id={}",
+            env!("GIT_HASH"),
+            self.host,
+            self.port,
+            self.container_id,
+        );
+
         // If the user never registered a callback, create an empty holder so
         // the server has something to clone.
         let callback = self
