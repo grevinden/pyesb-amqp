@@ -1,3 +1,3 @@
-from .core import add_routes
+from .core import ChannelMetadata, add_routes
 
-__all__ = ["add_routes"]
+__all__ = ["add_routes", "ChannelMetadata"]
