@@ -103,8 +103,8 @@ impl PyServer {
             .ok();
 
         info!(
-            "pyesb_amqp starting — commit={}, host={}, port={}, container_id={}",
-            env!("GIT_HASH"),
+            "pyesb_amqp v{} starting — host={}, port={}, container_id={}",
+            env!("CARGO_PKG_VERSION"),
             self.host,
             self.port,
             self.container_id,

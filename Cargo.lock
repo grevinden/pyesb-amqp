@@ -569,7 +569,7 @@ dependencies = [
 
 [[package]]
 name = "pyesb_amqp"
-version = "0.0.0"
+version = "0.0.1"
 dependencies = [
  "anyhow",
  "fe2o3-amqp",
