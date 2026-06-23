@@ -1,5 +1,3 @@
-import re
-
 from fastapi import APIRouter, FastAPI
 
 from .models import ChannelDesription, ChannelMetadata, ChannelRuntime, Token

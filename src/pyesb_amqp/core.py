@@ -12,16 +12,22 @@ class AmqpServer:
 
     Usage::
 
-        from pyesb_amqp import AMQP, AmqpMessage
+        from pyesb_amqp import AmqpServer, AmqpMessage
 
-        async def handler(msg: AmqpMessage) -> bool:
-            print(f"Got: {msg.body}")
+        async def handler(channel: str, msg: AmqpMessage) -> bool:
+            print(f"[{channel}] Got: {msg.body}")
             return True   # accept
 
         server = AmqpServer(host="0.0.0.0", port=6698)
         await server.start(handler)
         ...
         await server.stop()
+
+    Если в handler не нужен channel — используйте ``*args`` или ``**kwargs``::
+
+        async def handler(_channel: str, msg: AmqpMessage) -> bool:
+            print(f"Got: {msg.body}")
+            return True
 
     Или через async with (автостарт, если передан handler)::
 
@@ -52,8 +58,10 @@ class AmqpServer:
         """Запустить сервер и зарегистрировать обработчик сообщений.
 
         Args:
-            handler: Асинхронная функция, принимающая ``AmqpMessage`` и
-                возвращающая ``True`` (accept) или ``False`` (reject).
+            handler: Асинхронная функция, принимающая ``(channel: str, msg: AmqpMessage)``
+                    и возвращающая ``True`` (accept) или ``False`` (reject).
+                    ``channel`` — название канала (target address из AMQP Attach-фрейма
+                    отправителя, может быть пустой строкой, если не указан).
 
         Raises:
             RuntimeError: Если нет запущенного asyncio-цикла.
