@@ -28,10 +28,11 @@ class ChannelRuntime(BaseModel):
 
 class E1CMessage(BaseModel):
     id: UUID
+    delivery_tag: str
     durable: bool
     priority: NonNegativeInt
     properties: dict[str, str]
-    body: str
+    body: bytes
 
 
 class Token(BaseModel):
