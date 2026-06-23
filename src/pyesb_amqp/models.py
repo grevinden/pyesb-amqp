@@ -13,7 +13,7 @@ class E1CMessage(BaseModel):
         integ_recipient_code: list[str]
         integ_message_body_size: NonNegativeInt
 
-        @field_validator("recipient_code", mode="before")
+        @field_validator("integ_recipient_code", "recipient_code", mode="before")
         @classmethod
         def recipient_code_validator(cls, v: str) -> list[str]:
             return v.split(sep=",")
