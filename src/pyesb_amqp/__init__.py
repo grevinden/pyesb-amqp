@@ -7,10 +7,7 @@ High-performance AMQP 1.0 message broker built on Rust (fe2o3-amqp + tokio).
 from __future__ import annotations
 
 from .core import AmqpServer
+from .models import E1CMessage
 from .proto import AmqpMessage, AmqpMessageHandler
 
-__all__ = [
-    "AmqpMessage",
-    "AmqpMessageHandler",
-    "AmqpServer",
-]
+__all__ = ["AmqpMessage", "AmqpMessageHandler", "AmqpServer", "E1CMessage"]

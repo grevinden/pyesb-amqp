@@ -1,5 +1,4 @@
 from typing import Literal
-from uuid import UUID
 
 from pydantic import Field, NonNegativeInt, PositiveInt
 from pydantic.main import BaseModel
@@ -24,15 +23,6 @@ class ChannelRuntime(BaseModel):
 
     items: list[Metadata]
     port: PositiveInt = 6698
-
-
-class E1CMessage(BaseModel):
-    id: UUID
-    delivery_tag: str
-    durable: bool
-    priority: NonNegativeInt
-    properties: dict[str, str]
-    body: bytes
 
 
 class Token(BaseModel):
