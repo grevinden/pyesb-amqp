@@ -216,12 +216,17 @@ async with AmqpServer() as server:
 
 ```python
 class AmqpMessage(Protocol):
-    id: str          # Delivery tag (hex)
-    body: bytes      # Тело сообщения
+    id: str | None       # AMQP message-id (UUID от 1С), None если не задан
+    delivery_tag: str    # Delivery tag (hex), транспортный идентификатор
+    body: bytes          # Тело сообщения
     properties: dict[str, str]  # AMQP application properties
-    durable: bool    # Флаг долговечности
-    priority: int    # Приоритет (0–255)
+    durable: bool        # Флаг долговечности
+    priority: int        # Приоритет (0–255)
 ```
+
+> **Важно**: `id` — это AMQP ``message-id`` из секции Properties, а не delivery tag.
+> Для идентификации сообщений используйте ``id``. ``delivery_tag`` — это
+> транспортный счётчик, который сбрасывается при каждом новом соединении.
 
 ### AmqpMessageHandler
 

@@ -18,7 +18,7 @@ use fe2o3_amqp::acceptor::{
 };
 use fe2o3_amqp::types::{
     definitions,
-    messaging::{ApplicationProperties, Body},
+    messaging::{ApplicationProperties, Body, MessageId},
     primitives::{SimpleValue, Value},
 };
 use fe2o3_amqp::{Delivery, Receiver};
@@ -36,9 +36,13 @@ const CALLBACK_CHANNEL_CAP: usize = 1_000;
 #[pyclass(name = "AmqpMessage", module = "pyesb_amqp", skip_from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyAmqpMessage {
-    /// Delivery tag (hex-encoded).
+    /// AMQP message-id from the Properties section (the meaningful identifier).
+    /// None if the sender did not set it.
     #[pyo3(get)]
-    pub id: String,
+    pub id: Option<String>,
+    /// Delivery tag (hex-encoded) — transport-level counter assigned by the link.
+    #[pyo3(get)]
+    pub delivery_tag: String,
     /// Raw message body bytes.
     #[pyo3(get)]
     pub body: Vec<u8>,
@@ -57,8 +61,9 @@ pub struct PyAmqpMessage {
 impl PyAmqpMessage {
     fn __repr__(&self) -> String {
         format!(
-            "AmqpMessage(id={}, body_len={}, props={})",
+            "AmqpMessage(id={:?}, delivery_tag={}, body_len={}, props={})",
             self.id,
+            self.delivery_tag,
             self.body.len(),
             self.properties.len()
         )
@@ -579,6 +584,7 @@ async fn handle_receiver(
         let msg_data = delivery_to_data(&delivery);
         let py_msg = PyAmqpMessage {
             id: msg_data.id,
+            delivery_tag: msg_data.delivery_tag,
             body: msg_data.body,
             properties: msg_data.properties,
             durable: msg_data.durable,
@@ -650,7 +656,12 @@ fn delivery_to_data(delivery: &Delivery<Body<Value>>) -> MessageData {
     let message = delivery.message();
 
     // -- delivery tag as hex --------------------------------------------
-    let id = hex::encode(delivery.delivery_tag().as_ref());
+    let delivery_tag = hex::encode(delivery.delivery_tag().as_ref());
+
+    // -- AMQP message-id from Properties section ------------------------
+    let id = message.properties.as_ref()
+        .and_then(|props| props.message_id.as_ref())
+        .map(message_id_to_string);
 
     // -- body -----------------------------------------------------------
     let body = body_to_bytes(delivery.body());
@@ -666,6 +677,7 @@ fn delivery_to_data(delivery: &Delivery<Body<Value>>) -> MessageData {
 
     MessageData {
         id,
+        delivery_tag,
         body,
         properties,
         durable,
@@ -675,7 +687,8 @@ fn delivery_to_data(delivery: &Delivery<Body<Value>>) -> MessageData {
 
 /// Plain data struct used before conversion to the Python class.
 struct MessageData {
-    id: String,
+    id: Option<String>,
+    delivery_tag: String,
     body: Vec<u8>,
     properties: HashMap<String, String>,
     durable: bool,
@@ -703,6 +716,16 @@ fn extract_properties(app_props: Option<&ApplicationProperties>) -> HashMap<Stri
         }
     }
     map
+}
+
+/// Convert an AMQP MessageId to a Python-friendly string.
+fn message_id_to_string(msg_id: &MessageId) -> String {
+    match msg_id {
+        MessageId::Ulong(val) => val.to_string(),
+        MessageId::Uuid(val) => format!("{:x}", val),
+        MessageId::Binary(val) => hex::encode(val.as_ref()),
+        MessageId::String(val) => val.clone(),
+    }
 }
 
 fn simple_value_to_string(val: &SimpleValue) -> String {
